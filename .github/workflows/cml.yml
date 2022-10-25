@@ -1,0 +1,51 @@
+name: CML
+on: push
+jobs:
+  deploy-runner:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v3
+      - uses: iterative/setup-cml@v1
+      - uses: aws-actions/configure-aws-credentials@v1
+        with:
+          aws-region: us-west-1
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-session-token: ${{ secrets.AWS_SESSION_TOKEN }}
+      - name: Create Runner
+        env:
+          REPO_TOKEN: ${{ secrets.PERSONAL_ACCESS_TOKEN }}
+        run: |
+          cml runner launch --single \
+            --labels=cml \
+            --cloud=aws \
+            --cloud-region=us-west \
+            --cloud-hdd-size=100 \
+            --cloud-type=g4dn.xlarge
+  runner-job:
+    needs: deploy-runner
+    runs-on: [ self-hosted, cml ]
+    container:
+      image: iterativeai/cml:0-dvc2-base1-gpu
+      options: --gpus all
+    steps:
+      - uses: actions/checkout@v3
+      - name: training
+        env:
+          REPO_TOKEN: ${{ secrets.PERSONAL_ACCESS_TOKEN }}
+        run: |
+          # Setup project
+          pip install -r src/requirements.txt
+          dvc pull
+
+          # Run pipeline
+          dvc repro
+
+          # Compare metrics to main
+          git fetch --prune
+
+          echo "# Metrics" >> report.md
+          dvc metrics diff --show-md main >> report.md
+
+          # Create report
+          cml comment create report.md
